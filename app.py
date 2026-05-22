@@ -1,40 +1,78 @@
-"""
-File4Life Backend - Image Converter Edition
-=============================================
-Lightweight Flask backend for image conversions.
-Works on free hosting (Render, Railway, PythonAnywhere).
-"""
-
+from flask import Flask, request, jsonify, send_file, render_template
+from flask_cors import CORS
+from werkzeug.utils import secure_filename
 import os
 import uuid
 import hashlib
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from dataclasses import dataclass
-from enum import Enum
 
-from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
-from werkzeug.utils import secure_filename
-from PIL import Image
+app = Flask(__name__)
+CORS(app)
 
-# ========== CONFIG ==========
-UPLOAD_FOLDER = '/tmp/file4life/uploads'
-CONVERTED_FOLDER = '/tmp/file4life/converted'
-MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
-RETENTION_SECONDS = 3600  # 1 hour
+UPLOAD_FOLDER = '/tmp/uploads'
+CONVERTED_FOLDER = '/tmp/converted'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(CONVERTED_FOLDER, exist_ok=True)
 
-# Supported formats
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff', 'svg', 'heic', 'pdf'}
-CONVERSION_MAP = {
-    'png': ['jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tiff', 'pdf'],
-    'jpg': ['png', 'webp', 'gif', 'bmp', 'tiff', 'pdf'],
-    'jpeg': ['png', 'webp', 'gif', 'bmp', 'tiff', 'pdf'],
-    'webp': ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff'],
-    'gif': ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff'],
-    'bmp': ['png', 'jpg', 'jpeg', 'webp', 'gif', 'tiff'],
-    'tiff': ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'pdf'],
+records = {}
+
+@app.route('/')
+def home():
+    return render_template('index.html')
+
+@app.route('/api/health')
+def health():
+    return jsonify({'status': 'ok', 'version': '1.0'})
+
+@app.route('/api/upload', methods=['POST'])
+def upload():
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file'}), 400
+    
+    f = request.files['file']
+    if f.filename == '':
+        return jsonify({'success': False, 'error': 'Empty filename'}), 400
+    
+    file_id = hashlib.sha256(f"{uuid.uuid4()}{time.time()}".encode()).hexdigest()[:16]
+    ext = Path(f.filename).suffix.lower().lstrip('.')
+    filename = f"{file_id}.{ext}"
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    f.save(filepath)
+    
+    records[file_id] = {
+        'file_id': file_id,
+        'original_name': f.filename,
+        'path': filepath,
+        'size': os.path.getsize(filepath),
+        'ext': ext,
+        'expires': datetime.utcnow() + timedelta(hours=1)
+    }
+    
+    return jsonify({
+        'success': True,
+        'file': {
+            'file_id': file_id,
+            'original_name': f.filename,
+            'size': os.path.getsize(filepath),
+            'download_url': f'/api/download/{file_id}'
+        }
+    })
+
+@app.route('/api/download/<file_id>')
+def download(file_id):
+    if file_id not in records:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    
+    rec = records[file_id]
+    if not os.path.exists(rec['path']):
+        return jsonify({'success': False, 'error': 'File missing'}), 404
+    
+    return send_file(rec['path'], as_attachment=True, download_name=rec['original_name'])
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)    'tiff': ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'pdf'],
     'svg': ['png', 'jpg', 'jpeg', 'webp', 'pdf'],
     'heic': ['jpg', 'jpeg', 'png', 'webp'],
     'pdf': ['png', 'jpg', 'jpeg', 'webp'],
