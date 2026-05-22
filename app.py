@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify, send_file, render_template
 from flask_cors import CORS
-from werkzeug.utils import secure_filename
 import os
 import uuid
 import hashlib
@@ -35,6 +34,44 @@ def upload():
     if f.filename == '':
         return jsonify({'success': False, 'error': 'Empty filename'}), 400
     
+    file_id = hashlib.sha256(f"{uuid.uuid4()}{time.time()}".encode()).hexdigest()[:16]
+    ext = Path(f.filename).suffix.lower().lstrip('.')
+    filename = f"{file_id}.{ext}"
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    f.save(filepath)
+    
+    records[file_id] = {
+        'file_id': file_id,
+        'original_name': f.filename,
+        'path': filepath,
+        'size': os.path.getsize(filepath),
+        'ext': ext,
+        'expires': datetime.utcnow() + timedelta(hours=1)
+    }
+    
+    return jsonify({
+        'success': True,
+        'file': {
+            'file_id': file_id,
+            'original_name': f.filename,
+            'size': os.path.getsize(filepath),
+            'download_url': f'/api/download/{file_id}'
+        }
+    })
+
+@app.route('/api/download/<file_id>')
+def download(file_id):
+    if file_id not in records:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+    
+    rec = records[file_id]
+    if not os.path.exists(rec['path']):
+        return jsonify({'success': False, 'error': 'File missing'}), 404
+    
+    return send_file(rec['path'], as_attachment=True, download_name=rec['original_name'])
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)    
     file_id = hashlib.sha256(f"{uuid.uuid4()}{time.time()}".encode()).hexdigest()[:16]
     ext = Path(f.filename).suffix.lower().lstrip('.')
     filename = f"{file_id}.{ext}"
